@@ -16,6 +16,8 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
     error,
     clearError,
     addToast,
+    userEmail,
+    signOut,
   } = useVault()
 
   const [localError, setLocalError] = useState<string | null>(null)
@@ -30,17 +32,22 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
 
   const handleSubmitPassword = async (e: React.FormEvent) => {
     e.preventDefault()
+
     clearError()
     setLocalError(null)
+
     if (newPassword !== confirmNewPassword) {
       setLocalError('Passwords do not match')
       return
     }
+
     if (newPassword.length < 8) {
       setLocalError('New master password must be at least 8 characters')
       return
     }
+
     await changeMasterPassword(currentPassword, newPassword)
+
     setChangePasswordOpen(false)
     setCurrentPassword('')
     setNewPassword('')
@@ -49,17 +56,24 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
 
   const handleImport = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!importFile) {
-      return
-    }
-    if (!importPassword) {
-      return
-    }
+
+    if (!importFile) return
+    if (!importPassword) return
+
     try {
       await importBackup(importFile, importPassword)
+
       setImportOpen(false)
       setImportFile(null)
       setImportPassword('')
+
+      const input = document.getElementById(
+        'import-file-input',
+      ) as HTMLInputElement | null
+
+      if (input) {
+        input.value = ''
+      }
     } catch (err) {
       console.error('Import failed:', err)
     }
@@ -67,6 +81,7 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+
     if (file) {
       setImportFile(file)
     }
@@ -77,8 +92,8 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
     addToast('Backup file generated and downloaded', 'success')
   }
 
-  const handleBack = () => {
-    onNavigate({ name: 'dashboard' })
+  const handleSignOut = async () => {
+    await signOut()
   }
 
   return (
@@ -87,10 +102,11 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
         <button
           type="button"
           className="btn btn-text"
-          onClick={handleBack}
+          onClick={() => onNavigate({ name: 'dashboard' })}
         >
           ← Back
         </button>
+
         <h1>Settings</h1>
       </header>
 
@@ -98,15 +114,48 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
 
       <div className="settings-sections">
         <section className="settings-section">
+          <h2>Account</h2>
+
+          <div className="settings-list">
+            <div className="settings-item">
+              <span>Signed in as</span>
+
+              <span className="settings-value">
+                {userEmail ?? 'Unknown'}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              className="settings-item"
+              onClick={() => void handleSignOut()}
+            >
+              <span>Sign Out</span>
+            </button>
+          </div>
+
+          <p className="security-note">
+            Your account is used for cloud synchronization. Your SHF master
+            password encrypts the vault before it is stored in Supabase.
+          </p>
+        </section>
+
+        <section className="settings-section">
           <h2>Security</h2>
+
           <div className="settings-list">
             <button
               type="button"
               className="settings-item"
-              onClick={() => setChangePasswordOpen(true)}
+              onClick={() => {
+                clearError()
+                setLocalError(null)
+                setChangePasswordOpen(true)
+              }}
             >
               <span>Change Master Password</span>
             </button>
+
             <button
               type="button"
               className="settings-item"
@@ -119,6 +168,7 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
 
         <section className="settings-section">
           <h2>Data</h2>
+
           <div className="settings-list">
             <button
               type="button"
@@ -127,15 +177,23 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
             >
               <span>Export Backup</span>
             </button>
+
             <button
               type="button"
               className="settings-item"
               onClick={() => {
+                clearError()
                 setImportOpen(true)
                 setImportFile(null)
                 setImportPassword('')
-                const input = document.getElementById('import-file-input') as HTMLInputElement
-                if (input) input.value = ''
+
+                const input = document.getElementById(
+                  'import-file-input',
+                ) as HTMLInputElement | null
+
+                if (input) {
+                  input.value = ''
+                }
               }}
             >
               <span>Import Backup</span>
@@ -145,15 +203,18 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
 
         <section className="settings-section">
           <h2>About</h2>
+
           <div className="settings-list">
             <div className="settings-item">
               <span>Job Website Manager</span>
               <span className="settings-value">v1.0.0</span>
             </div>
           </div>
+
           <p className="security-note">
-            This application is designed as a personal local credential organizer.
-            Keep regular encrypted backups and never share your master password.
+            SHF stores an encrypted vault in the cloud so your records can be
+            available across your devices. Keep regular encrypted backups and
+            never share your master password.
           </p>
         </section>
       </div>
@@ -161,11 +222,21 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
       <Modal
         open={changePasswordOpen}
         title="Change Master Password"
-        onClose={() => setChangePasswordOpen(false)}
+        onClose={() => {
+          setChangePasswordOpen(false)
+          setCurrentPassword('')
+          setNewPassword('')
+          setConfirmNewPassword('')
+          setLocalError(null)
+          clearError()
+        }}
       >
         <form onSubmit={handleSubmitPassword} className="form">
           <div className="form-group">
-            <label htmlFor="current-password">Current Master Password</label>
+            <label htmlFor="current-password">
+              Current Master Password
+            </label>
+
             <input
               id="current-password"
               type="password"
@@ -175,8 +246,12 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
               autoComplete="current-password"
             />
           </div>
+
           <div className="form-group">
-            <label htmlFor="new-password">New Master Password</label>
+            <label htmlFor="new-password">
+              New Master Password
+            </label>
+
             <input
               id="new-password"
               type="password"
@@ -186,8 +261,12 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
               autoComplete="new-password"
             />
           </div>
+
           <div className="form-group">
-            <label htmlFor="confirm-new-password">Confirm New Master Password</label>
+            <label htmlFor="confirm-new-password">
+              Confirm New Master Password
+            </label>
+
             <input
               id="confirm-new-password"
               type="password"
@@ -197,15 +276,29 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
               autoComplete="new-password"
             />
           </div>
-          {(error || localError) && <div className="form-error">{error || localError}</div>}
+
+          {(error || localError) && (
+            <div className="form-error">
+              {error || localError}
+            </div>
+          )}
+
           <div className="form-actions">
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => setChangePasswordOpen(false)}
+              onClick={() => {
+                setChangePasswordOpen(false)
+                setCurrentPassword('')
+                setNewPassword('')
+                setConfirmNewPassword('')
+                setLocalError(null)
+                clearError()
+              }}
             >
               Cancel
             </button>
+
             <button
               type="submit"
               className="btn btn-primary"
@@ -224,20 +317,32 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
       <Modal
         open={importOpen}
         title="Import Backup"
-        onClose={() => setImportOpen(false)}
+        onClose={() => {
+          setImportOpen(false)
+          setImportFile(null)
+          setImportPassword('')
+          clearError()
+        }}
       >
         <form onSubmit={handleImport} className="form">
           <div className="form-group">
-            <label htmlFor="import-file">Backup File</label>
+            <label htmlFor="import-file-input">
+              Backup File
+            </label>
+
             <input
-              id="import-file"
+              id="import-file-input"
               type="file"
               accept=".json,application/json"
               onChange={handleFileChange}
             />
           </div>
+
           <div className="form-group">
-            <label htmlFor="import-password">Master Password for Backup</label>
+            <label htmlFor="import-password">
+              Master Password for Backup
+            </label>
+
             <input
               id="import-password"
               type="password"
@@ -247,15 +352,23 @@ export default function SettingsPage({ onNavigate }: SettingsPageProps) {
               autoComplete="current-password"
             />
           </div>
+
           {error && <div className="form-error">{error}</div>}
+
           <div className="form-actions">
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => setImportOpen(false)}
+              onClick={() => {
+                setImportOpen(false)
+                setImportFile(null)
+                setImportPassword('')
+                clearError()
+              }}
             >
               Cancel
             </button>
+
             <button
               type="submit"
               className="btn btn-danger"

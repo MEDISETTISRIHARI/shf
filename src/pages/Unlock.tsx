@@ -1,133 +1,320 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useVault } from '../VaultContext'
 
 export function UnlockScreen() {
-  const { vaultExists, initializeVault, unlockVault, error, clearError } = useVault()
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [localError, setLocalError] = useState<string | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const {
+    authenticated,
+    vaultExists,
+    loading,
+    error,
+    clearError,
+    userEmail,
+    signIn,
+    signUp,
+    signOut,
+    initializeVault,
+    unlockVault,
+  } = useVault()
+
+  const [accountMode, setAccountMode] =
+    useState<'signin' | 'signup'>('signin')
+
+  const [email, setEmail] = useState('')
+  const [accountPassword, setAccountPassword] = useState('')
+  const [confirmAccountPassword, setConfirmAccountPassword] = useState('')
+
+  const [masterPassword, setMasterPassword] = useState('')
+  const [confirmMasterPassword, setConfirmMasterPassword] = useState('')
 
   useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 100)
-  }, [])
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (isSubmitting) return
     clearError()
-    setLocalError(null)
+  }, [accountMode, authenticated, clearError])
 
-    if (password.length < 1) {
-      setLocalError('Password is required')
-      return
-    }
+  const handleAccountSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    clearError()
 
-    if (!vaultExists) {
-      if (password !== confirmPassword) {
-        setLocalError('Passwords do not match')
+    if (!email.trim()) return
+
+    if (accountMode === 'signup') {
+      if (accountPassword.length < 8) return
+
+      if (accountPassword !== confirmAccountPassword) {
         return
       }
-      if (password.length < 8) {
-        setLocalError('Master password must be at least 8 characters')
-        return
-      }
-      setIsSubmitting(true)
-      await initializeVault(password)
-      setIsSubmitting(false)
-      if (!error) {
-        setPassword('')
-        setConfirmPassword('')
-      }
+
+      await signUp(email.trim(), accountPassword)
     } else {
-      setIsSubmitting(true)
-      await unlockVault(password)
-      setIsSubmitting(false)
-      if (!error) {
-        setPassword('')
-      }
+      await signIn(email.trim(), accountPassword)
     }
   }
 
-  const displayError = error || localError
+  const handleVaultSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    clearError()
+
+    if (!vaultExists) {
+      if (masterPassword.length < 8) return
+
+      if (masterPassword !== confirmMasterPassword) {
+        return
+      }
+
+      await initializeVault(masterPassword)
+    } else {
+      await unlockVault(masterPassword)
+    }
+  }
+
+  if (loading && !authenticated) {
+    return (
+      <main className="unlock-screen">
+        <div className="unlock-card">
+          <h1>SHF</h1>
+          <p className="unlock-subtitle">Job Website Manager</p>
+          <p>Connecting securely...</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (!authenticated) {
+    return (
+      <main className="unlock-screen">
+        <div className="unlock-card">
+          <h1>SHF</h1>
+
+          <p className="unlock-subtitle">
+            Job Website Manager
+          </p>
+
+          <h2>
+            {accountMode === 'signin'
+              ? 'Sign in'
+              : 'Create account'}
+          </h2>
+
+          <p className="security-note">
+            Your SHF account syncs your encrypted vault
+            across your devices.
+          </p>
+
+          <form
+            onSubmit={handleAccountSubmit}
+            className="form"
+          >
+            <div className="form-group">
+              <label htmlFor="account-email">
+                Email
+              </label>
+
+              <input
+                id="account-email"
+                type="email"
+                value={email}
+                onChange={(e) =>
+                  setEmail(e.target.value)
+                }
+                placeholder="you@example.com"
+                autoComplete="email"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="account-password">
+                Account Password
+              </label>
+
+              <input
+                id="account-password"
+                type="password"
+                value={accountPassword}
+                onChange={(e) =>
+                  setAccountPassword(e.target.value)
+                }
+                placeholder="At least 8 characters"
+                autoComplete={
+                  accountMode === 'signin'
+                    ? 'current-password'
+                    : 'new-password'
+                }
+                required
+              />
+            </div>
+
+            {accountMode === 'signup' && (
+              <div className="form-group">
+                <label htmlFor="confirm-account-password">
+                  Confirm Account Password
+                </label>
+
+                <input
+                  id="confirm-account-password"
+                  type="password"
+                  value={confirmAccountPassword}
+                  onChange={(e) =>
+                    setConfirmAccountPassword(
+                      e.target.value,
+                    )
+                  }
+                  placeholder="Repeat account password"
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+            )}
+
+            {error && (
+              <div className="form-error">
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={
+                loading ||
+                !email.trim() ||
+                accountPassword.length < 8 ||
+                (accountMode === 'signup' &&
+                  accountPassword !==
+                    confirmAccountPassword)
+              }
+            >
+              {loading
+                ? 'Please wait...'
+                : accountMode === 'signin'
+                  ? 'Sign in'
+                  : 'Create account'}
+            </button>
+          </form>
+
+          <button
+            type="button"
+            className="btn btn-text"
+            onClick={() =>
+              setAccountMode((mode) =>
+                mode === 'signin'
+                  ? 'signup'
+                  : 'signin',
+              )
+            }
+          >
+            {accountMode === 'signin'
+              ? 'Create a new SHF account'
+              : 'Already have an account? Sign in'}
+          </button>
+        </div>
+      </main>
+    )
+  }
 
   return (
-    <div className="unlock-screen">
+    <main className="unlock-screen">
       <div className="unlock-card">
-        <h1>Job Website Manager</h1>
-        {vaultExists ? (
-          <>
-            <h2>Unlock Job Website Manager</h2>
-            <form onSubmit={handleSubmit} className="form">
-              <div className="form-group">
-                <label htmlFor="master-password">Master Password</label>
-                <input
-                  ref={inputRef}
-                  id="master-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your master password"
-                  autoComplete="current-password"
-                  disabled={isSubmitting}
-                />
-              </div>
-              {displayError && <div className="form-error">{displayError}</div>}
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={isSubmitting || !password}
-              >
-                {isSubmitting ? 'Unlocking...' : 'Unlock'}
-              </button>
-            </form>
-          </>
-        ) : (
-          <>
-            <h2>Create Master Password</h2>
-            <p className="unlock-description">
-              Create your secure local vault. Your master password will encrypt all stored
-              credentials.
-            </p>
-            <form onSubmit={handleSubmit} className="form">
-              <div className="form-group">
-                <label htmlFor="create-password">Master Password</label>
-                <input
-                  ref={inputRef}
-                  id="create-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Create a master password (min 8 characters)"
-                  autoComplete="new-password"
-                  disabled={isSubmitting}
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="confirm-password">Confirm Master Password</label>
-                <input
-                  id="confirm-password"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirm master password"
-                  autoComplete="new-password"
-                  disabled={isSubmitting}
-                />
-              </div>
-              {displayError && <div className="form-error">{displayError}</div>}
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={isSubmitting || !password || password !== confirmPassword}
-              >
-                {isSubmitting ? 'Creating vault...' : 'Create Vault'}
-              </button>
-            </form>
-          </>
-        )}
+        <h1>SHF</h1>
+
+        <p className="unlock-subtitle">
+          Job Website Manager
+        </p>
+
+        <div className="security-note">
+          Signed in as <strong>{userEmail}</strong>
+        </div>
+
+        <h2>
+          {vaultExists
+            ? 'Unlock your vault'
+            : 'Create your vault'}
+        </h2>
+
+        <p className="security-note">
+          {vaultExists
+            ? 'Enter your SHF master password to decrypt your encrypted cloud vault.'
+            : 'Create a master password. It encrypts your job-site credentials and is never sent to Supabase.'}
+        </p>
+
+        <form
+          onSubmit={handleVaultSubmit}
+          className="form"
+        >
+          <div className="form-group">
+            <label htmlFor="master-password">
+              Master Password
+            </label>
+
+            <input
+              id="master-password"
+              type="password"
+              value={masterPassword}
+              onChange={(e) =>
+                setMasterPassword(e.target.value)
+              }
+              placeholder="At least 8 characters"
+              autoComplete="current-password"
+              required
+              autoFocus
+            />
+          </div>
+
+          {!vaultExists && (
+            <div className="form-group">
+              <label htmlFor="confirm-master-password">
+                Confirm Master Password
+              </label>
+
+              <input
+                id="confirm-master-password"
+                type="password"
+                value={confirmMasterPassword}
+                onChange={(e) =>
+                  setConfirmMasterPassword(
+                    e.target.value,
+                  )
+                }
+                placeholder="Repeat master password"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+          )}
+
+          {error && (
+            <div className="form-error">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={
+              loading ||
+              masterPassword.length < 8 ||
+              (!vaultExists &&
+                masterPassword !==
+                  confirmMasterPassword)
+            }
+          >
+            {loading
+              ? 'Please wait...'
+              : vaultExists
+                ? 'Unlock Vault'
+                : 'Create Vault'}
+          </button>
+        </form>
+
+        <button
+          type="button"
+          className="btn btn-text"
+          onClick={() => void signOut()}
+          disabled={loading}
+        >
+          Sign out
+        </button>
       </div>
-    </div>
+    </main>
   )
 }
