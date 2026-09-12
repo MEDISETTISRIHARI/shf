@@ -12,12 +12,18 @@ export type Route =
   | { name: 'category'; id: string }
   | { name: 'settings' }
 
+// GitHub Pages project base path
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, '')
+
 export function App() {
   const { unlocked, loading } = useVault()
-  const [route, setRoute] = useState<Route>({ name: 'unlock' })
+  const [route, setRoute] = useState<Route>(() =>
+    pathToRoute(window.location.pathname),
+  )
 
   useEffect(() => {
     if (loading) return
+
     if (unlocked) {
       if (route.name === 'unlock') {
         setRoute({ name: 'dashboard' })
@@ -29,23 +35,24 @@ export function App() {
 
   useEffect(() => {
     const handlePopState = () => {
-      const path = window.location.pathname
-      setRoute(pathToRoute(path))
+      setRoute(pathToRoute(window.location.pathname))
     }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
 
-  useEffect(() => {
-    const path = window.location.pathname
-    if (path && path !== '/') {
-      setRoute(pathToRoute(path))
+    window.addEventListener('popstate', handlePopState)
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
     }
   }, [])
 
   const navigate = (newRoute: Route) => {
     setRoute(newRoute)
-    window.history.pushState({}, '', routeToPath(newRoute))
+
+    window.history.pushState(
+      {},
+      '',
+      routeToPath(newRoute),
+    )
   }
 
   if (loading) {
@@ -65,12 +72,21 @@ export function App() {
     switch (route.name) {
       case 'unlock':
         return <UnlockScreen />
+
       case 'dashboard':
         return <Dashboard onNavigate={navigate} />
+
       case 'category':
-        return <CategoryPage categoryId={route.id} onNavigate={navigate} />
+        return (
+          <CategoryPage
+            categoryId={route.id}
+            onNavigate={navigate}
+          />
+        )
+
       case 'settings':
         return <SettingsPage onNavigate={navigate} />
+
       default:
         return <UnlockScreen />
     }
@@ -85,25 +101,46 @@ export function App() {
 }
 
 function pathToRoute(path: string): Route {
-  if (path === '/settings') return { name: 'settings' }
-  if (path.startsWith('/category/')) {
-    const id = decodeURIComponent(path.slice('/category/'.length))
-    return { name: 'category', id }
+  // Remove GitHub Pages base path: /shf
+  let appPath = path
+
+  if (appPath.startsWith(BASE_PATH)) {
+    appPath = appPath.slice(BASE_PATH.length) || '/'
   }
+
+  if (appPath === '/settings') {
+    return { name: 'settings' }
+  }
+
+  if (appPath.startsWith('/category/')) {
+    const id = decodeURIComponent(
+      appPath.slice('/category/'.length),
+    )
+
+    return {
+      name: 'category',
+      id,
+    }
+  }
+
   return { name: 'unlock' }
 }
 
 function routeToPath(route: Route): string {
   switch (route.name) {
     case 'unlock':
-      return '/'
+      return `${BASE_PATH}/`
+
     case 'dashboard':
-      return '/'
+      return `${BASE_PATH}/`
+
     case 'category':
-      return `/category/${encodeURIComponent(route.id)}`
+      return `${BASE_PATH}/category/${encodeURIComponent(route.id)}`
+
     case 'settings':
-      return '/settings'
+      return `${BASE_PATH}/settings`
+
     default:
-      return '/'
+      return `${BASE_PATH}/`
   }
 }

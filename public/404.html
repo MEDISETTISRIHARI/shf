@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SHF</title>
+    <script>
+      var pathSegmentsToKeep = 1;
+
+      var l = window.location;
+      var repoPath = l.pathname
+        .split("/")
+        .slice(0, 1 + pathSegmentsToKeep)
+        .join("/");
+
+      var redirect =
+        l.protocol +
+        "//" +
+        l.host +
+        repoPath +
+        "/?/" +
+        l.pathname
+          .slice(repoPath.length)
+          .split("/")
+          .filter(Boolean)
+          .join("/") +
+        (l.search ? "&" + l.search.slice(1).replace(/&/g, "~and~") : "") +
+        l.hash;
+
+      sessionStorage.redirect = redirect;
+      l.replace(
+        l.protocol +
+          "//" +
+          l.host +
+          repoPath +
+          "/"
+      );
+    </script>
+  </head>
+  <body>
+    Redirecting...
+  </body>
+</html>
