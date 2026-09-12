@@ -1,4 +1,4 @@
-import {
+﻿import {
   createContext,
   useContext,
   useEffect,
@@ -21,6 +21,7 @@ import { supabase } from './services/supabase'
 interface VaultContextType {
   unlocked: boolean
   vaultExists: boolean
+  initialized: boolean
 
   authenticated: boolean
   userEmail: string | null
@@ -124,7 +125,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const [categories, setCategories] = useState<Category[]>([])
   const [websites, setWebsites] = useState<Website[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [initialized, setInitialized] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
@@ -201,132 +203,101 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const checkVaultExists = useCallback(async () => {
     try {
-      setLoading(true)
-
-      await syncCloudToLocal()
-
       const { record, metadata } = await dbService.getVaultSnapshot()
-
       setVaultExists(Boolean(record && metadata))
 
       if (metadata && !record) {
-        setError(
-          'Vault data is incomplete. Restore a backup to continue.'
-        )
+        setError('Vault data is incomplete. Restore a backup to continue.')
       }
     } catch (err) {
       console.error('Failed to check vault:', err)
-
-      setError(
-        'Failed to access local storage. Please reload the page.'
-      )
-    } finally {
-      setLoading(false)
+      setError('Failed to access local storage. Please reload the page.')
     }
-  }, [syncCloudToLocal])
-
-  useEffect(() => {
-    checkVaultExists()
-  }, [checkVaultExists])
+  }, [])
 
   useEffect(() => {
     let cancelled = false
 
-    const restoreSession = async () => {
-      const savedPassword = sessionStorage.getItem(
-        SESSION_PASSWORD_KEY
-      )
-
-      if (!savedPassword) return
-
-      try {
-        await syncCloudToLocal()
-
-        const { record, metadata } =
-          await dbService.getVaultSnapshot()
-
-        if (cancelled || !record || !metadata) return
-
-        const decrypted =
-          await EncryptionService.decryptVault(
-            record.encryptedPayload,
-            metadata,
-            savedPassword
-          )
-
-        if (!isValidVaultData(decrypted)) {
-          throw new Error('Invalid vault data')
-        }
-
-        if (cancelled) return
-
-        passwordRef.current = savedPassword
-        recordRef.current = record
-        metadataRef.current = metadata
-        decryptedDataRef.current = decrypted
-
-        setUnlocked(true)
-        setVaultExists(true)
-        syncUI(decrypted)
-        setError(null)
-      } catch (err) {
-        console.error('Failed to restore unlocked session:', err)
-
-        sessionStorage.removeItem(SESSION_PASSWORD_KEY)
-        passwordRef.current = null
-        decryptedDataRef.current = null
-        metadataRef.current = null
-        recordRef.current = null
-        setUnlocked(false)
-      }
-    }
-
-    void restoreSession()
-
-    return () => {
-      cancelled = true
-    }
-  }, [syncCloudToLocal, syncUI])
-
-  useEffect(() => {
-    let mounted = true
-
-    const loadSession = async () => {
+    const initializeApp = async () => {
       try {
         const {
           data: { session },
         } = await supabase.auth.getSession()
 
-        if (!mounted) return
+        if (cancelled) return
 
         setAuthenticated(Boolean(session))
         setUserEmail(session?.user.email ?? null)
 
         if (session) {
           await syncCloudToLocal()
-          await checkVaultExists()
+        }
+
+        const { record, metadata } = await dbService.getVaultSnapshot()
+
+        if (cancelled) return
+
+        setVaultExists(Boolean(record && metadata))
+
+        const savedPassword = sessionStorage.getItem(SESSION_PASSWORD_KEY)
+
+        if (savedPassword && record && metadata) {
+          try {
+            const decrypted = await EncryptionService.decryptVault(
+              record.encryptedPayload,
+              metadata,
+              savedPassword,
+            )
+
+            if (!isValidVaultData(decrypted)) {
+              throw new Error('Invalid vault data')
+            }
+
+            if (!cancelled) {
+              passwordRef.current = savedPassword
+              recordRef.current = record
+              metadataRef.current = metadata
+              decryptedDataRef.current = decrypted
+              setUnlocked(true)
+              setVaultExists(true)
+              syncUI(decrypted)
+              setError(null)
+            }
+          } catch (err) {
+            console.error('Failed to restore unlocked session:', err)
+            sessionStorage.removeItem(SESSION_PASSWORD_KEY)
+            passwordRef.current = null
+            decryptedDataRef.current = null
+            metadataRef.current = null
+            recordRef.current = null
+            setUnlocked(false)
+          }
         }
       } catch (err) {
-        console.error('Failed to load Supabase session:', err)
+        console.error('Failed to initialize app:', err)
+        if (!cancelled) {
+          setError('Failed to access local storage. Please reload the page.')
+        }
+      } finally {
+        if (!cancelled) setInitialized(true)
       }
     }
 
-    void loadSession()
+    void initializeApp()
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return
-
+      if (cancelled) return
       setAuthenticated(Boolean(session))
       setUserEmail(session?.user.email ?? null)
     })
 
     return () => {
-      mounted = false
+      cancelled = true
       subscription.unsubscribe()
     }
-  }, [checkVaultExists, syncCloudToLocal])
+  }, [syncCloudToLocal, syncUI])
 
   const signIn = async (
     email: string,
@@ -1097,6 +1068,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       value={{
         unlocked,
         vaultExists,
+        initialized,
 
         authenticated,
         userEmail,
@@ -1166,3 +1138,4 @@ export function useVault() {
 
   return context
 }
+

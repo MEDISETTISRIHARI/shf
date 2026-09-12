@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --text: #4a4650;
   --text-h: #1a181e;
   --bg: #ffffff;
@@ -1023,3 +1023,119 @@ img {
     --border-hover: #3e4050;
   }
 }
+
+
+/* Final responsive fixes */
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button,
+input,
+textarea,
+select {
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .dashboard-header,
+  .page-header {
+    align-items: stretch;
+  }
+
+  .dashboard-header h1,
+  .page-header h1 {
+    font-size: 1.35rem;
+    overflow-wrap: anywhere;
+  }
+
+  .header-actions,
+  .category-page-actions,
+  .category-actions,
+  .website-action-row,
+  .website-edit-actions,
+  .form-actions,
+  .dialog-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .header-actions .btn,
+  .category-page-actions .btn,
+  .website-action-row .btn,
+  .website-edit-actions .btn,
+  .form-actions .btn,
+  .dialog-actions .btn {
+    flex: 1 1 140px;
+    min-height: 42px;
+  }
+
+  .category-card {
+    padding: 14px;
+  }
+
+  .category-card-header {
+    align-items: flex-start;
+  }
+
+  .category-actions {
+    width: auto;
+    flex-shrink: 0;
+  }
+
+  .website-card,
+  .unlock-card,
+  .settings-section {
+    padding: 16px;
+  }
+
+  .modal-backdrop,
+  .dialog-backdrop {
+    padding: 12px;
+  }
+
+  .modal,
+  .dialog {
+    max-height: 90vh;
+    padding: 18px;
+  }
+
+  .toast-container {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+}
+
+@media (max-width: 420px) {
+  .container,
+  .category-page,
+  .settings-page {
+    padding: 12px;
+  }
+
+  .btn {
+    padding: 9px 12px;
+    font-size: 0.9rem;
+  }
+
+  .category-card-header {
+    gap: 8px;
+  }
+
+  .category-actions .btn-icon {
+    width: 32px;
+    height: 32px;
+  }
+}
+

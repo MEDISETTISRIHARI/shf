@@ -12,26 +12,25 @@ export type Route =
   | { name: 'category'; id: string }
   | { name: 'settings' }
 
-// GitHub Pages project base path
 const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, '')
 
 export function App() {
-  const { unlocked, loading } = useVault()
+  const { unlocked, initialized } = useVault()
   const [route, setRoute] = useState<Route>(() =>
     pathToRoute(window.location.pathname),
   )
 
   useEffect(() => {
-    if (loading) return
+    if (!initialized) return
 
     if (unlocked) {
       if (route.name === 'unlock') {
         setRoute({ name: 'dashboard' })
       }
-    } else {
+    } else if (route.name !== 'unlock') {
       setRoute({ name: 'unlock' })
     }
-  }, [unlocked, loading, route.name])
+  }, [initialized, unlocked, route.name])
 
   useEffect(() => {
     const handlePopState = () => {
@@ -39,87 +38,67 @@ export function App() {
     }
 
     window.addEventListener('popstate', handlePopState)
-
-    return () => {
-      window.removeEventListener('popstate', handlePopState)
-    }
+    return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
   const navigate = (newRoute: Route) => {
     setRoute(newRoute)
-
-    window.history.pushState(
-      {},
-      '',
-      routeToPath(newRoute),
-    )
+    window.history.pushState({}, '', routeToPath(newRoute))
   }
 
-  if (loading) {
+  if (!initialized) {
     return (
       <div className="app-loading">
-        <div className="spinner"></div>
+        <div className="spinner" />
         <p>Loading...</p>
       </div>
     )
   }
 
-  const renderRoute = () => {
-    if (!unlocked) {
-      return <UnlockScreen />
-    }
-
-    switch (route.name) {
-      case 'unlock':
-        return <UnlockScreen />
-
-      case 'dashboard':
-        return <Dashboard onNavigate={navigate} />
-
-      case 'category':
-        return (
-          <CategoryPage
-            categoryId={route.id}
-            onNavigate={navigate}
-          />
-        )
-
-      case 'settings':
-        return <SettingsPage onNavigate={navigate} />
-
-      default:
-        return <UnlockScreen />
-    }
+  if (!unlocked) {
+    return <UnlockScreen />
   }
 
-  return (
-    <>
-      {renderRoute()}
-      <ToastContainer />
-    </>
-  )
+  switch (route.name) {
+    case 'category':
+      return (
+        <>
+          <CategoryPage categoryId={route.id} onNavigate={navigate} />
+          <ToastContainer />
+        </>
+      )
+    case 'settings':
+      return (
+        <>
+          <SettingsPage onNavigate={navigate} />
+          <ToastContainer />
+        </>
+      )
+    case 'unlock':
+    case 'dashboard':
+    default:
+      return (
+        <>
+          <Dashboard onNavigate={navigate} />
+          <ToastContainer />
+        </>
+      )
+  }
 }
 
 function pathToRoute(path: string): Route {
-  // Remove GitHub Pages base path: /shf
   let appPath = path
 
   if (appPath.startsWith(BASE_PATH)) {
     appPath = appPath.slice(BASE_PATH.length) || '/'
   }
 
-  if (appPath === '/settings') {
-    return { name: 'settings' }
-  }
+  if (appPath === '/settings') return { name: 'settings' }
 
   if (appPath.startsWith('/category/')) {
-    const id = decodeURIComponent(
-      appPath.slice('/category/'.length),
-    )
-
     return {
       name: 'category',
-      id,
+      id: decodeURIComponent(appPath.slice('/category/'.length)),
     }
   }
 
@@ -128,18 +107,12 @@ function pathToRoute(path: string): Route {
 
 function routeToPath(route: Route): string {
   switch (route.name) {
-    case 'unlock':
-      return `${BASE_PATH}/`
-
-    case 'dashboard':
-      return `${BASE_PATH}/`
-
     case 'category':
       return `${BASE_PATH}/category/${encodeURIComponent(route.id)}`
-
     case 'settings':
       return `${BASE_PATH}/settings`
-
+    case 'unlock':
+    case 'dashboard':
     default:
       return `${BASE_PATH}/`
   }
