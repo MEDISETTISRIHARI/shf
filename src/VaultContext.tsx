@@ -165,9 +165,45 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setWebsites(sortWebsites(data.websites))
   }, [])
 
+  const getCurrentUserId = useCallback(async (): Promise<string | null> => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    return user?.id ?? null
+  }, [])
+
+  const syncCloudToLocal = useCallback(async (): Promise<void> => {
+    const userId = await getCurrentUserId()
+
+    if (!userId) return
+
+    const cloudRecord = await dbService.getCloudVault(userId)
+
+    if (!cloudRecord) return
+
+    const localSnapshot = await dbService.getVaultSnapshot()
+    const localUpdatedAt = localSnapshot.metadata?.updatedAt
+      ? Date.parse(localSnapshot.metadata.updatedAt)
+      : 0
+    const cloudUpdatedAt = Date.parse(cloudRecord.updated_at)
+
+    if (
+      !localSnapshot.record ||
+      !localSnapshot.metadata ||
+      cloudUpdatedAt > localUpdatedAt
+    ) {
+      await dbService.saveVaultRecord(
+        dbService.cloudToVaultRecord(cloudRecord)
+      )
+    }
+  }, [getCurrentUserId])
+
   const checkVaultExists = useCallback(async () => {
     try {
       setLoading(true)
+
+      await syncCloudToLocal()
 
       const { record, metadata } = await dbService.getVaultSnapshot()
 
@@ -187,7 +223,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [syncCloudToLocal])
 
   useEffect(() => {
     checkVaultExists()
@@ -204,6 +240,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!savedPassword) return
 
       try {
+        await syncCloudToLocal()
+
         const { record, metadata } =
           await dbService.getVaultSnapshot()
 
@@ -248,7 +286,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [syncUI])
+  }, [syncCloudToLocal, syncUI])
 
   useEffect(() => {
     let mounted = true
@@ -263,6 +301,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
         setAuthenticated(Boolean(session))
         setUserEmail(session?.user.email ?? null)
+
+        if (session) {
+          await syncCloudToLocal()
+          await checkVaultExists()
+        }
       } catch (err) {
         console.error('Failed to load Supabase session:', err)
       }
@@ -283,7 +326,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       mounted = false
       subscription.unsubscribe()
     }
-  }, [])
+  }, [checkVaultExists, syncCloudToLocal])
 
   const signIn = async (
     email: string,
@@ -318,6 +361,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setAuthenticated(Boolean(session))
       setUserEmail(session?.user.email ?? email.trim())
 
+      await syncCloudToLocal()
       await checkVaultExists()
 
       addToast('Signed in successfully', 'success')
@@ -364,6 +408,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         setAuthenticated(true)
         setUserEmail(data.user?.email ?? email.trim())
 
+        await syncCloudToLocal()
         await checkVaultExists()
 
         addToast('Account created successfully', 'success')
@@ -436,7 +481,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           metadata,
         }
 
+        // Always save locally first so the user's data is not lost.
         await dbService.saveVaultRecord(record)
+
+        // Upload the encrypted vault when the user is signed in.
+        const userId = await getCurrentUserId()
+
+        if (userId) {
+          try {
+            await dbService.saveCloudVault(userId, record)
+          } catch (cloudError) {
+            console.error('Cloud sync failed:', cloudError)
+            addToast(
+              'Saved on this device, but cloud sync failed.',
+              'error'
+            )
+          }
+        }
 
         recordRef.current = record
         metadataRef.current = metadata
@@ -448,13 +509,18 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         console.error('Failed to save vault:', err)
 
-        setError('Unable to save changes. Please try again.')
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Unable to save changes. Please try again.'
+        )
 
         return false
       }
     },
-    [syncUI]
+    [addToast, getCurrentUserId, syncUI]
   )
+
 
   const initializeVault = async (masterPassword: string) => {
     try {
@@ -484,6 +550,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
       await dbService.saveVaultRecord(record)
 
+      const userId = await getCurrentUserId()
+      if (userId) {
+        await dbService.saveCloudVault(userId, record)
+      }
+
       passwordRef.current = masterPassword
 
       sessionStorage.setItem(
@@ -510,6 +581,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const unlockVault = async (masterPassword: string) => {
     try {
+      await syncCloudToLocal()
+
       const { record, metadata } =
         await dbService.getVaultSnapshot()
 
@@ -887,6 +960,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
       await dbService.saveVaultRecord(newRecord)
 
+      const userId = await getCurrentUserId()
+      if (userId) {
+        await dbService.saveCloudVault(userId, newRecord)
+      }
+
       recordRef.current = newRecord
       metadataRef.current = newMetadata
       passwordRef.current = newPassword
@@ -991,6 +1069,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       }
 
       await dbService.saveVaultRecord(newRecord)
+
+      const userId = await getCurrentUserId()
+      if (userId) {
+        await dbService.saveCloudVault(userId, newRecord)
+      }
 
       recordRef.current = newRecord
       metadataRef.current = metadata

@@ -63,7 +63,9 @@ class DatabaseService {
         }
       }
 
-      request.onsuccess = () => resolve(request.result)
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
     })
 
     return this.dbPromise
@@ -80,6 +82,7 @@ class DatabaseService {
         [VAULT_STORE, METADATA_STORE],
         'readonly',
       )
+
       const vaultStore = transaction.objectStore(VAULT_STORE)
       const metadataStore = transaction.objectStore(METADATA_STORE)
 
@@ -107,10 +110,12 @@ class DatabaseService {
         [VAULT_STORE, METADATA_STORE],
         'readwrite',
       )
+
       const vaultStore = transaction.objectStore(VAULT_STORE)
       const metadataStore = transaction.objectStore(METADATA_STORE)
 
       vaultStore.put(record)
+
       metadataStore.put({
         id: METADATA_RECORD_ID,
         metadata: record.metadata,
@@ -120,14 +125,18 @@ class DatabaseService {
         reject(transaction.error ?? new Error('Unable to save local vault.'))
       }
 
-      transaction.oncomplete = () => resolve()
+      transaction.oncomplete = () => {
+        resolve()
+      }
     })
   }
 
   async getCloudVault(userId: string): Promise<CloudVaultRecord | null> {
     const { data, error } = await supabase
-      .from('vaults')
-      .select('user_id, encrypted_payload, metadata, created_at, updated_at')
+      .from('user_vaults')
+      .select(
+        'user_id, encrypted_payload, metadata, created_at, updated_at',
+      )
       .eq('user_id', userId)
       .maybeSingle()
 
@@ -143,7 +152,7 @@ class DatabaseService {
     record: VaultRecord,
   ): Promise<CloudVaultRecord> {
     const { data, error } = await supabase
-      .from('vaults')
+      .from('user_vaults')
       .upsert(
         {
           user_id: userId,
@@ -151,9 +160,13 @@ class DatabaseService {
           metadata: record.metadata,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: 'user_id' },
+        {
+          onConflict: 'user_id',
+        },
       )
-      .select('user_id, encrypted_payload, metadata, created_at, updated_at')
+      .select(
+        'user_id, encrypted_payload, metadata, created_at, updated_at',
+      )
       .single()
 
     if (error) {
