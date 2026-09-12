@@ -17,47 +17,61 @@ import {
 import { EncryptionService } from './services/encryption'
 import { backupService } from './services/backup'
 import { supabase } from './services/supabase'
-import type { User } from '@supabase/supabase-js'
 
 interface VaultContextType {
   unlocked: boolean
   vaultExists: boolean
+
   authenticated: boolean
   userEmail: string | null
+
+  signIn: (email: string, password: string) => Promise<void>
+  signUp: (email: string, password: string) => Promise<void>
+  signOut: () => Promise<void>
+
   categories: Category[]
   websites: Website[]
   loading: boolean
   error: string | null
   toasts: ToastMessage[]
-  signIn: (email: string, password: string) => Promise<void>
-  signUp: (email: string, password: string) => Promise<void>
-  signOut: () => Promise<void>
+
   initializeVault: (masterPassword: string) => Promise<void>
   unlockVault: (masterPassword: string) => Promise<void>
   lockVault: () => void
   clearError: () => void
+
   createCategory: (name: string) => Promise<void>
   updateCategory: (id: string, name: string) => Promise<void>
   deleteCategory: (id: string) => Promise<void>
+
   addWebsite: (
     categoryId: string,
-    website: Omit<Website, 'id' | 'categoryId' | 'createdAt' | 'updatedAt'>,
+    website: Omit<Website, 'id' | 'categoryId' | 'createdAt' | 'updatedAt'>
   ) => Promise<void>
+
   updateWebsite: (
     id: string,
     updates: Partial<
       Omit<Website, 'id' | 'categoryId' | 'createdAt' | 'updatedAt'>
-    >,
+    >
   ) => Promise<void>
+
   deleteWebsite: (id: string) => Promise<void>
   toggleFavorite: (id: string) => Promise<void>
-  changeMasterPassword: (current: string, newPassword: string) => Promise<void>
+
+  changeMasterPassword: (
+    current: string,
+    newPassword: string
+  ) => Promise<void>
+
   exportBackup: () => void
   importBackup: (file: File, masterPassword: string) => Promise<void>
+
   addToast: (
     message: string,
-    type?: 'info' | 'success' | 'error',
+    type?: 'info' | 'success' | 'error'
   ) => void
+
   removeToast: (id: string) => void
 }
 
@@ -69,6 +83,8 @@ const INITIAL_VAULT_DATA: VaultData = {
   schemaVersion: 1,
 }
 
+const SESSION_PASSWORD_KEY = 'shf-session-master-password'
+
 function generateId(): string {
   return crypto.randomUUID?.() ?? Math.random().toString(36).slice(2, 12)
 }
@@ -79,14 +95,19 @@ function sortCategories(categories: Category[]): Category[] {
 
 function sortWebsites(websites: Website[]): Website[] {
   return [...websites].sort((a, b) => {
-    if (a.favorite !== b.favorite) return b.favorite ? -1 : 1
+    if (a.favorite !== b.favorite) {
+      return b.favorite ? -1 : 1
+    }
+
     return a.name.localeCompare(b.name)
   })
 }
 
 function isValidVaultData(data: unknown): data is VaultData {
   if (!data || typeof data !== 'object') return false
+
   const candidate = data as Partial<VaultData>
+
   return (
     Array.isArray(candidate.categories) &&
     Array.isArray(candidate.websites) &&
@@ -97,7 +118,10 @@ function isValidVaultData(data: unknown): data is VaultData {
 export function VaultProvider({ children }: { children: ReactNode }) {
   const [unlocked, setUnlocked] = useState(false)
   const [vaultExists, setVaultExists] = useState(false)
-  const [user, setUser] = useState<User | null>(null)
+
+  const [authenticated, setAuthenticated] = useState(false)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
+
   const [categories, setCategories] = useState<Category[]>([])
   const [websites, setWebsites] = useState<Website[]>([])
   const [loading, setLoading] = useState(true)
@@ -108,230 +132,297 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const metadataRef = useRef<VaultMetadata | null>(null)
   const recordRef = useRef<VaultRecord | null>(null)
   const passwordRef = useRef<string | null>(null)
-  const userRef = useRef<User | null>(null)
 
   const addToast = useCallback(
-    (message: string, type: 'info' | 'success' | 'error' = 'info') => {
+    (
+      message: string,
+      type: 'info' | 'success' | 'error' = 'info'
+    ) => {
       const id = generateId()
-      setToasts((prev) => [...prev, { id, message, type }])
+
+      setToasts((prev) => [
+        ...prev,
+        {
+          id,
+          message,
+          type,
+        },
+      ])
     },
-    [],
+    []
   )
 
   const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id))
+    setToasts((prev) => prev.filter((toast) => toast.id !== id))
   }, [])
 
-  const clearError = useCallback(() => setError(null), [])
+  const clearError = useCallback(() => {
+    setError(null)
+  }, [])
 
   const syncUI = useCallback((data: VaultData) => {
     setCategories(sortCategories(data.categories))
     setWebsites(sortWebsites(data.websites))
   }, [])
 
-  const loadVaultForUser = useCallback(
-    async (currentUser: User) => {
+  const checkVaultExists = useCallback(async () => {
+    try {
       setLoading(true)
-      setError(null)
 
-      try {
-        const cloud = await dbService.getCloudVault(currentUser.id)
+      const { record, metadata } = await dbService.getVaultSnapshot()
 
-        if (cloud) {
-          const record = dbService.cloudToVaultRecord(cloud)
-          await dbService.saveVaultRecord(record)
+      setVaultExists(Boolean(record && metadata))
 
-          recordRef.current = record
-          metadataRef.current = record.metadata
-          setVaultExists(true)
-          return
-        }
-
-        // First login on an account: migrate the existing local vault if one exists.
-        const local = await dbService.getVaultSnapshot()
-
-        if (local.record && local.metadata) {
-          const record: VaultRecord = {
-            id: 'current',
-            encryptedPayload: local.record.encryptedPayload,
-            metadata: local.metadata,
-          }
-
-          await dbService.saveCloudVault(currentUser.id, record)
-          recordRef.current = record
-          metadataRef.current = record.metadata
-          setVaultExists(true)
-          addToast('Your existing local vault was moved to the cloud.', 'success')
-          return
-        }
-
-        recordRef.current = null
-        metadataRef.current = null
-        setVaultExists(false)
-      } catch (err) {
-        console.error('Failed to load cloud vault:', err)
+      if (metadata && !record) {
         setError(
-          err instanceof Error
-            ? err.message
-            : 'Unable to connect to the cloud vault.',
+          'Vault data is incomplete. Restore a backup to continue.'
         )
-        setVaultExists(false)
-      } finally {
-        setLoading(false)
       }
-    },
-    [addToast],
-  )
+    } catch (err) {
+      console.error('Failed to check vault:', err)
+
+      setError(
+        'Failed to access local storage. Please reload the page.'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    let mounted = true
+    checkVaultExists()
+  }, [checkVaultExists])
 
-    const initializeAuth = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+  useEffect(() => {
+    let cancelled = false
 
-      if (!mounted) return
+    const restoreSession = async () => {
+      const savedPassword = sessionStorage.getItem(
+        SESSION_PASSWORD_KEY
+      )
 
-      userRef.current = session?.user ?? null
-      setUser(session?.user ?? null)
+      if (!savedPassword) return
 
-      if (session?.user) {
-        await loadVaultForUser(session.user)
-      } else {
-        const local = await dbService.getVaultSnapshot().catch(() => null)
-        if (mounted) {
-          setVaultExists(Boolean(local?.record && local?.metadata))
-          setLoading(false)
+      try {
+        const { record, metadata } =
+          await dbService.getVaultSnapshot()
+
+        if (cancelled || !record || !metadata) return
+
+        const decrypted =
+          await EncryptionService.decryptVault(
+            record.encryptedPayload,
+            metadata,
+            savedPassword
+          )
+
+        if (!isValidVaultData(decrypted)) {
+          throw new Error('Invalid vault data')
         }
-      }
-    }
 
-    void initializeAuth()
+        if (cancelled) return
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      const nextUser = session?.user ?? null
-      userRef.current = nextUser
-      setUser(nextUser)
+        passwordRef.current = savedPassword
+        recordRef.current = record
+        metadataRef.current = metadata
+        decryptedDataRef.current = decrypted
 
-      if (!nextUser) {
+        setUnlocked(true)
+        setVaultExists(true)
+        syncUI(decrypted)
+        setError(null)
+      } catch (err) {
+        console.error('Failed to restore unlocked session:', err)
+
+        sessionStorage.removeItem(SESSION_PASSWORD_KEY)
         passwordRef.current = null
         decryptedDataRef.current = null
         metadataRef.current = null
         recordRef.current = null
         setUnlocked(false)
-        setCategories([])
-        setWebsites([])
-        setVaultExists(false)
-        setLoading(false)
-        return
       }
+    }
 
-      setTimeout(() => {
-        void loadVaultForUser(nextUser)
-      }, 0)
+    void restoreSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [syncUI])
+
+  useEffect(() => {
+    let mounted = true
+
+    const loadSession = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+
+        if (!mounted) return
+
+        setAuthenticated(Boolean(session))
+        setUserEmail(session?.user.email ?? null)
+      } catch (err) {
+        console.error('Failed to load Supabase session:', err)
+      }
+    }
+
+    void loadSession()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return
+
+      setAuthenticated(Boolean(session))
+      setUserEmail(session?.user.email ?? null)
     })
 
     return () => {
       mounted = false
       subscription.unsubscribe()
     }
-  }, [loadVaultForUser])
+  }, [])
 
-  useEffect(() => {
-    if (!user) return
+  const signIn = async (
+    email: string,
+    password: string
+  ): Promise<void> => {
+    try {
+      setError(null)
+      setLoading(true)
 
-    const channel = supabase
-      .channel(`shf-vault-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'vaults',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as {
-            user_id?: string
-            encrypted_payload?: string
-            metadata?: VaultMetadata
-          }
+      if (!email.trim()) {
+        throw new Error('Email is required')
+      }
 
-          if (!row.encrypted_payload || !row.metadata) {
-            return
-          }
+      if (!password) {
+        throw new Error('Password is required')
+      }
 
-          const incoming: VaultRecord = {
-            id: 'current',
-            encryptedPayload: row.encrypted_payload,
-            metadata: row.metadata,
-          }
+      const { error: signInError } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        })
 
-          // Ignore the realtime echo of our own save.
-          if (
-            recordRef.current?.encryptedPayload === incoming.encryptedPayload
-          ) {
-            return
-          }
+      if (signInError) {
+        throw signInError
+      }
 
-          recordRef.current = incoming
-          metadataRef.current = incoming.metadata
-          setVaultExists(true)
-          void dbService.saveVaultRecord(incoming)
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
 
-          const password = passwordRef.current
+      setAuthenticated(Boolean(session))
+      setUserEmail(session?.user.email ?? email.trim())
 
-          if (!password) {
-            return
-          }
+      await checkVaultExists()
 
-          void (async () => {
-            try {
-              const decrypted = await EncryptionService.decryptVault(
-                incoming.encryptedPayload,
-                incoming.metadata,
-                password,
-              )
+      addToast('Signed in successfully', 'success')
+    } catch (err) {
+      console.error('Sign-in failed:', err)
 
-              if (!isValidVaultData(decrypted)) {
-                throw new Error('Corrupt vault data')
-              }
-
-              decryptedDataRef.current = decrypted
-              syncUI(decrypted)
-              addToast('Vault synchronized from another device.', 'success')
-            } catch {
-              // A remote master-password change makes the old local password
-              // unable to decrypt the new vault. Lock and require the new one.
-              passwordRef.current = null
-              decryptedDataRef.current = null
-              setUnlocked(false)
-              setCategories([])
-              setWebsites([])
-              addToast(
-                'The vault changed on another device. Unlock again with the current master password.',
-                'info',
-              )
-            }
-          })()
-        },
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to sign in. Please check your credentials.'
       )
-      .subscribe()
-
-    return () => {
-      void supabase.removeChannel(channel)
+    } finally {
+      setLoading(false)
     }
-  }, [user, syncUI, addToast])
+  }
+
+  const signUp = async (
+    email: string,
+    password: string
+  ): Promise<void> => {
+    try {
+      setError(null)
+      setLoading(true)
+
+      if (!email.trim()) {
+        throw new Error('Email is required')
+      }
+
+      if (password.length < 8) {
+        throw new Error('Password must be at least 8 characters')
+      }
+
+      const { data, error: signUpError } =
+        await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+        })
+
+      if (signUpError) {
+        throw signUpError
+      }
+
+      if (data.session) {
+        setAuthenticated(true)
+        setUserEmail(data.user?.email ?? email.trim())
+
+        await checkVaultExists()
+
+        addToast('Account created successfully', 'success')
+      } else {
+        addToast(
+          'Account created. Please check your email to verify your account.',
+          'info'
+        )
+      }
+    } catch (err) {
+      console.error('Sign-up failed:', err)
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to create your account.'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const signOut = async (): Promise<void> => {
+    try {
+      setError(null)
+
+      lockVault()
+
+      const { error: signOutError } =
+        await supabase.auth.signOut()
+
+      if (signOutError) {
+        throw signOutError
+      }
+
+      setAuthenticated(false)
+      setUserEmail(null)
+
+      addToast('Signed out successfully', 'success')
+    } catch (err) {
+      console.error('Sign-out failed:', err)
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to sign out.'
+      )
+    }
+  }
 
   const persistVault = useCallback(
     async (data: VaultData): Promise<boolean> => {
       const password = passwordRef.current
 
       if (!password) {
-        setError('Vault is locked. Please unlock it before saving changes.')
+        setError(
+          'Vault is locked. Please unlock it before saving changes.'
+        )
+
         return false
       }
 
@@ -347,119 +438,43 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
         await dbService.saveVaultRecord(record)
 
-        if (userRef.current) {
-          await dbService.saveCloudVault(userRef.current.id, record)
-        }
-
         recordRef.current = record
         metadataRef.current = metadata
         decryptedDataRef.current = data
+
         syncUI(data)
+
         return true
       } catch (err) {
         console.error('Failed to save vault:', err)
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Unable to save changes. Please try again.',
-        )
+
+        setError('Unable to save changes. Please try again.')
+
         return false
       }
     },
-    [syncUI],
+    [syncUI]
   )
-
-  const signIn = async (email: string, password: string) => {
-    setLoading(true)
-    setError(null)
-
-    try {
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      })
-
-      if (authError) throw authError
-      addToast('Signed in successfully.', 'success')
-    } catch (err) {
-      console.error('Sign in failed:', err)
-      setError(
-        err instanceof Error ? err.message : 'Unable to sign in.',
-      )
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const signUp = async (email: string, password: string) => {
-    setLoading(true)
-    setError(null)
-
-    try {
-      if (password.length < 8) {
-        throw new Error('Account password must be at least 8 characters.')
-      }
-
-      const { data, error: authError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-      })
-
-      if (authError) throw authError
-
-      if (data.session) {
-        addToast('Account created successfully.', 'success')
-      } else {
-        addToast(
-          'Account created. Check your email to confirm your account, then sign in.',
-          'success',
-        )
-      }
-    } catch (err) {
-      console.error('Sign up failed:', err)
-      setError(
-        err instanceof Error ? err.message : 'Unable to create account.',
-      )
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const signOut = async () => {
-    setLoading(true)
-
-    try {
-      const { error: authError } = await supabase.auth.signOut()
-      if (authError) throw authError
-      addToast('Signed out.', 'info')
-    } catch (err) {
-      console.error('Sign out failed:', err)
-      setError(err instanceof Error ? err.message : 'Unable to sign out.')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const initializeVault = async (masterPassword: string) => {
     try {
-      if (!userRef.current) {
-        throw new Error('Please sign in to your SHF account first.')
-      }
-
       if (masterPassword.length < 8) {
-        throw new Error('Master password must be at least 8 characters')
+        throw new Error(
+          'Master password must be at least 8 characters'
+        )
       }
 
-      const existing = await dbService.getCloudVault(userRef.current.id)
+      const existing = await dbService.getVaultSnapshot()
 
-      if (existing) {
-        throw new Error('A cloud vault already exists')
+      if (existing.record || existing.metadata) {
+        throw new Error('A vault already exists')
       }
 
-      const { payload, metadata } = await EncryptionService.encryptVault(
-        INITIAL_VAULT_DATA,
-        masterPassword,
-      )
+      const { payload, metadata } =
+        await EncryptionService.encryptVault(
+          INITIAL_VAULT_DATA,
+          masterPassword
+        )
 
       const record: VaultRecord = {
         id: 'current',
@@ -468,9 +483,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       }
 
       await dbService.saveVaultRecord(record)
-      await dbService.saveCloudVault(userRef.current.id, record)
 
       passwordRef.current = masterPassword
+
+      sessionStorage.setItem(
+        SESSION_PASSWORD_KEY,
+        masterPassword
+      )
+
       recordRef.current = record
       metadataRef.current = metadata
       decryptedDataRef.current = INITIAL_VAULT_DATA
@@ -479,46 +499,37 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setVaultExists(true)
       setCategories([])
       setWebsites([])
+
       addToast('Vault created successfully', 'success')
-      setError(null)
     } catch (err) {
       console.error('Vault initialization failed:', err)
-      setError(err instanceof Error ? err.message : 'Failed to create vault.')
+
+      setError('Failed to create vault. Please try again.')
     }
   }
 
   const unlockVault = async (masterPassword: string) => {
     try {
-      if (!userRef.current) {
-        setError('Please sign in to your SHF account first.')
-        return
-      }
-
-      let record = recordRef.current
-      let metadata = metadataRef.current
+      const { record, metadata } =
+        await dbService.getVaultSnapshot()
 
       if (!record || !metadata) {
-        const cloud = await dbService.getCloudVault(userRef.current.id)
+        setError(
+          'No vault found. Please create a vault first.'
+        )
 
-        if (!cloud) {
-          setError('No vault found. Please create a vault first.')
-          return
-        }
-
-        record = dbService.cloudToVaultRecord(cloud)
-        metadata = record.metadata
-        recordRef.current = record
-        metadataRef.current = metadata
+        return
       }
 
       let data: VaultData
 
       try {
-        const decrypted = await EncryptionService.decryptVault(
-          record.encryptedPayload,
-          metadata,
-          masterPassword,
-        )
+        const decrypted =
+          await EncryptionService.decryptVault(
+            record.encryptedPayload,
+            metadata,
+            masterPassword
+          )
 
         if (!isValidVaultData(decrypted)) {
           throw new Error('Corrupt vault data')
@@ -530,23 +541,44 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       }
 
       passwordRef.current = masterPassword
+
+      sessionStorage.setItem(
+        SESSION_PASSWORD_KEY,
+        masterPassword
+      )
+
+      recordRef.current = record
+      metadataRef.current = metadata
       decryptedDataRef.current = data
+
       setUnlocked(true)
       setVaultExists(true)
+
       syncUI(data)
-      setError(null)
+
       addToast('Vault unlocked', 'success')
+      setError(null)
     } catch (err) {
       console.error('Unlock failed:', err)
-      setError(err instanceof Error ? err.message : 'Failed to unlock vault')
+
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Failed to unlock vault'
+
+      setError(message)
     }
   }
 
   const lockVault = () => {
     passwordRef.current = null
+
+    sessionStorage.removeItem(SESSION_PASSWORD_KEY)
+
     decryptedDataRef.current = null
     metadataRef.current = null
     recordRef.current = null
+
     setUnlocked(false)
     setCategories([])
     setWebsites([])
@@ -554,9 +586,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const createCategory = async (name: string) => {
     const current = decryptedDataRef.current
+
     if (!current) return
 
     const trimmed = name.trim()
+
     if (!trimmed) {
       setError('Category name is required')
       return
@@ -564,25 +598,25 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     if (
       current.categories.some(
-        (c) => c.name.toLowerCase() === trimmed.toLowerCase(),
+        (category) =>
+          category.name.toLowerCase() === trimmed.toLowerCase()
       )
     ) {
       setError('A category with this name already exists')
       return
     }
 
-    const now = new Date().toISOString()
     const maxOrder = current.categories.reduce(
-      (max, c) => Math.max(max, c.order),
-      -1,
+      (max, category) => Math.max(max, category.order),
+      -1
     )
 
     const newCategory: Category = {
       id: generateId(),
       name: trimmed,
       order: maxOrder + 1,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     }
 
     const data: VaultData = {
@@ -598,9 +632,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const updateCategory = async (id: string, name: string) => {
     const current = decryptedDataRef.current
+
     if (!current) return
 
     const trimmed = name.trim()
+
     if (!trimmed) {
       setError('Category name is required')
       return
@@ -608,8 +644,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     if (
       current.categories.some(
-        (c) =>
-          c.id !== id && c.name.toLowerCase() === trimmed.toLowerCase(),
+        (category) =>
+          category.id !== id &&
+          category.name.toLowerCase() === trimmed.toLowerCase()
       )
     ) {
       setError('A category with this name already exists')
@@ -618,10 +655,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     const data: VaultData = {
       ...current,
-      categories: current.categories.map((c) =>
-        c.id === id
-          ? { ...c, name: trimmed, updatedAt: new Date().toISOString() }
-          : c,
+      categories: current.categories.map((category) =>
+        category.id === id
+          ? {
+              ...category,
+              name: trimmed,
+              updatedAt: new Date().toISOString(),
+            }
+          : category
       ),
       websites: current.websites,
     }
@@ -633,12 +674,17 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const deleteCategory = async (id: string) => {
     const current = decryptedDataRef.current
+
     if (!current) return
 
     const data: VaultData = {
       ...current,
-      categories: current.categories.filter((c) => c.id !== id),
-      websites: current.websites.filter((w) => w.categoryId !== id),
+      categories: current.categories.filter(
+        (category) => category.id !== id
+      ),
+      websites: current.websites.filter(
+        (website) => website.categoryId !== id
+      ),
     }
 
     if (await persistVault(data)) {
@@ -648,9 +694,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const addWebsite = async (
     categoryId: string,
-    website: Omit<Website, 'id' | 'categoryId' | 'createdAt' | 'updatedAt'>,
+    website: Omit<
+      Website,
+      'id' | 'categoryId' | 'createdAt' | 'updatedAt'
+    >
   ) => {
     const current = decryptedDataRef.current
+
     if (!current) return
 
     const trimmed = trimWebsiteInput(website)
@@ -670,12 +720,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    if (!current.categories.some((c) => c.id === categoryId)) {
+    if (
+      !current.categories.some(
+        (category) => category.id === categoryId
+      )
+    ) {
       setError('Selected category does not exist')
       return
     }
-
-    const now = new Date().toISOString()
 
     const newWebsite: Website = {
       id: generateId(),
@@ -686,8 +738,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       password: trimmed.password,
       description: trimmed.description,
       favorite: trimmed.favorite,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     }
 
     const data: VaultData = {
@@ -705,12 +757,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     id: string,
     updates: Partial<
       Omit<Website, 'id' | 'categoryId' | 'createdAt' | 'updatedAt'>
-    >,
+    >
   ) => {
     const current = decryptedDataRef.current
+
     if (!current) return
 
-    const website = current.websites.find((w) => w.id === id)
+    const website = current.websites.find(
+      (item) => item.id === id
+    )
+
     if (!website) {
       setError('Website not found')
       return
@@ -745,7 +801,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     const data: VaultData = {
       ...current,
       categories: current.categories,
-      websites: current.websites.map((w) => (w.id === id ? updated : w)),
+      websites: current.websites.map((item) =>
+        item.id === id ? updated : item
+      ),
     }
 
     if (await persistVault(data)) {
@@ -755,12 +813,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const deleteWebsite = async (id: string) => {
     const current = decryptedDataRef.current
+
     if (!current) return
 
     const data: VaultData = {
       ...current,
       categories: current.categories,
-      websites: current.websites.filter((w) => w.id !== id),
+      websites: current.websites.filter(
+        (website) => website.id !== id
+      ),
     }
 
     if (await persistVault(data)) {
@@ -770,19 +831,20 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const toggleFavorite = async (id: string) => {
     const current = decryptedDataRef.current
+
     if (!current) return
 
     const data: VaultData = {
       ...current,
       categories: current.categories,
-      websites: current.websites.map((w) =>
-        w.id === id
+      websites: current.websites.map((website) =>
+        website.id === id
           ? {
-              ...w,
-              favorite: !w.favorite,
+              ...website,
+              favorite: !website.favorite,
               updatedAt: new Date().toISOString(),
             }
-          : w,
+          : website
       ),
     }
 
@@ -791,19 +853,20 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const changeMasterPassword = async (
     current: string,
-    newPassword: string,
+    newPassword: string
   ) => {
     const record = recordRef.current
     const metadata = metadataRef.current
-    const accountUser = userRef.current
 
-    if (!record || !metadata || !accountUser) {
+    if (!record || !metadata) {
       setError('Vault must be unlocked to change password')
       return
     }
 
     if (newPassword.length < 8) {
-      setError('New master password must be at least 8 characters')
+      setError(
+        'New master password must be at least 8 characters'
+      )
       return
     }
 
@@ -813,7 +876,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           record.encryptedPayload,
           current,
           newPassword,
-          metadata,
+          metadata
         )
 
       const newRecord: VaultRecord = {
@@ -823,24 +886,34 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       }
 
       await dbService.saveVaultRecord(newRecord)
-      await dbService.saveCloudVault(accountUser.id, newRecord)
 
       recordRef.current = newRecord
       metadataRef.current = newMetadata
       passwordRef.current = newPassword
 
-      addToast('Master password changed successfully', 'success')
+      sessionStorage.setItem(
+        SESSION_PASSWORD_KEY,
+        newPassword
+      )
+
+      addToast(
+        'Master password changed successfully',
+        'success'
+      )
+
       setError(null)
     } catch (err) {
       console.error('Change password failed:', err)
+
       setError(
-        'Current master password is incorrect or the vault could not be updated.',
+        'Current master password is incorrect or the vault could not be updated.'
       )
     }
   }
 
   const exportBackup = () => {
     const record = recordRef.current
+
     if (!record) {
       addToast('No data to export', 'info')
       return
@@ -848,36 +921,51 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     try {
       backupService.downloadBackup(record)
+
       addToast('Backup exported successfully', 'success')
     } catch (err) {
       console.error('Export failed:', err)
-      setError('Unable to export backup. Please try again.')
+
+      setError(
+        'Unable to export backup. Please try again.'
+      )
     }
   }
 
-  const importBackup = async (file: File, masterPassword: string) => {
+  const importBackup = async (
+    file: File,
+    masterPassword: string
+  ) => {
     const password = passwordRef.current
+
     if (!password) {
       setError('Vault must be unlocked to import backup')
       return
     }
 
     let backup
+
     try {
       backup = await backupService.readBackupFile(file)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Invalid backup file'
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Invalid backup file'
+
       setError(message)
       return
     }
 
     let recovered: VaultData
+
     try {
-      const decrypted = await EncryptionService.decryptVault(
-        backup.vault.encryptedPayload,
-        backup.vault.metadata,
-        masterPassword,
-      )
+      const decrypted =
+        await EncryptionService.decryptVault(
+          backup.vault.encryptedPayload,
+          backup.vault.metadata,
+          masterPassword
+        )
 
       if (!isValidVaultData(decrypted)) {
         throw new Error('Corrupt backup data')
@@ -891,7 +979,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
     try {
       const { payload, metadata } =
-        await EncryptionService.encryptVault(recovered, password)
+        await EncryptionService.encryptVault(
+          recovered,
+          password
+        )
 
       const newRecord: VaultRecord = {
         id: 'current',
@@ -901,61 +992,76 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
       await dbService.saveVaultRecord(newRecord)
 
-      if (userRef.current) {
-        await dbService.saveCloudVault(userRef.current.id, newRecord)
-      }
-
       recordRef.current = newRecord
       metadataRef.current = metadata
       decryptedDataRef.current = recovered
+
       syncUI(recovered)
-      addToast('Backup restored successfully', 'success')
-      setError(null)
+
+      addToast(
+        'Backup restored successfully',
+        'success'
+      )
     } catch (err) {
       console.error('Restore failed:', err)
+
       setError('Failed to restore backup')
     }
   }
 
-  const value: VaultContextType = {
-    unlocked,
-    vaultExists,
-    authenticated: Boolean(user),
-    userEmail: user?.email ?? null,
-    categories,
-    websites,
-    loading,
-    error,
-    toasts,
-    signIn,
-    signUp,
-    signOut,
-    initializeVault,
-    unlockVault,
-    lockVault,
-    clearError,
-    createCategory,
-    updateCategory,
-    deleteCategory,
-    addWebsite,
-    updateWebsite,
-    deleteWebsite,
-    toggleFavorite,
-    changeMasterPassword,
-    exportBackup,
-    importBackup,
-    addToast,
-    removeToast,
-  }
-
   return (
-    <VaultContext.Provider value={value}>{children}</VaultContext.Provider>
+    <VaultContext.Provider
+      value={{
+        unlocked,
+        vaultExists,
+
+        authenticated,
+        userEmail,
+        signIn,
+        signUp,
+        signOut,
+
+        categories,
+        websites,
+        loading,
+        error,
+        toasts,
+
+        initializeVault,
+        unlockVault,
+        lockVault,
+        clearError,
+
+        createCategory,
+        updateCategory,
+        deleteCategory,
+        addWebsite,
+        updateWebsite,
+        deleteWebsite,
+        toggleFavorite,
+
+        changeMasterPassword,
+        exportBackup,
+        importBackup,
+
+        addToast,
+        removeToast,
+      }}
+    >
+      {children}
+    </VaultContext.Provider>
   )
 }
 
 function trimWebsiteInput(
-  website: Omit<Website, 'id' | 'categoryId' | 'createdAt' | 'updatedAt'>,
-): Omit<Website, 'id' | 'categoryId' | 'createdAt' | 'updatedAt'> {
+  website: Omit<
+    Website,
+    'id' | 'categoryId' | 'createdAt' | 'updatedAt'
+  >
+): Omit<
+  Website,
+  'id' | 'categoryId' | 'createdAt' | 'updatedAt'
+> {
   return {
     name: website.name.trim(),
     url: website.url.trim(),
@@ -968,8 +1074,12 @@ function trimWebsiteInput(
 
 export function useVault() {
   const context = useContext(VaultContext)
+
   if (!context) {
-    throw new Error('useVault must be used within a VaultProvider')
+    throw new Error(
+      'useVault must be used within a VaultProvider'
+    )
   }
+
   return context
 }
