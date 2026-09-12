@@ -1139,3 +1139,71 @@ select {
   }
 }
 
+/* FINAL MOBILE CATEGORY FIX */
+
+.category-grid {
+  width: 100%;
+  min-width: 0;
+}
+
+.category-card {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.category-card-header {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.category-icon {
+  flex: 0 0 auto;
+}
+
+.category-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.category-name,
+.category-count {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.category-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+
+@media (max-width: 600px) {
+  .category-card {
+    padding: 14px;
+  }
+
+  .category-card-header {
+    align-items: flex-start;
+  }
+
+  .category-actions .btn-icon {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    flex: 0 0 30px;
+  }
+
+  .category-name {
+    font-size: 1rem;
+  }
+
+  .category-count {
+    font-size: 0.8rem;
+  }
+}
